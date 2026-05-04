@@ -439,13 +439,21 @@ async function runF3() {
         if (reqAmount && reqAmount !== montantCorrigé) {
           log(`F3 — Correction montant ${reqPhone}: my-managment=${fmtAmt(reqAmount)}F → YapsonPress=${fmtAmt(montantCorrigé)}F`);
           try {
-            const amountInput = await rowHandle.$('input[type="number"], input[name*="amount"], input[name*="montant"]');
-            if (amountInput) {
-              await amountInput.triple_click();
-              await amountInput.fill(String(montantCorrigé));
+            // rowHandle est un Locator — utiliser .locator() et non .$()
+            const amountLocator = rowHandle.locator('input[type="number"], input[name*="amount"], input[name*="montant"]').first();
+            const amountExists = await amountLocator.count();
+            if (amountExists > 0) {
+              await amountLocator.click({ clickCount: 3 }); // triple-clic pour tout sélectionner
+              await amountLocator.fill(String(montantCorrigé));
+              // Forcer Vue.js à prendre en compte la nouvelle valeur
+              await amountLocator.dispatchEvent('input');
+              await amountLocator.dispatchEvent('change');
               await page.waitForTimeout(300);
+              log(`F3 ✏ Montant corrigé dans la ligne : ${fmtAmt(reqAmount)}F → ${fmtAmt(montantCorrigé)}F`);
+            } else {
+              log(`F3 ⚠ Champ montant introuvable dans la ligne pour ${reqPhone} — correction via modale uniquement`);
             }
-          } catch(e) { log(`⚠ Saisie montant: ${e.message.substring(0,60)}`); }
+          } catch(e) { log(`⚠ Saisie montant ligne: ${e.message.substring(0,80)}`); }
         }
         try {
           let confirmLink = null;
@@ -467,8 +475,31 @@ async function runF3() {
           }
           if (!modalBtn) { log(`F3 ⚠ Modale CONFIRMER non trouvée pour ${reqPhone}`); continue; }
           if (montantCorrigé && montantCorrigé !== reqAmount) {
-            const mi = await page.$('input[placeholder="Montant"],input[placeholder="montant"]');
-            if (mi) { await mi.fill(''); await mi.fill(String(montantCorrigé)); await page.waitForTimeout(200); }
+            // Chercher le champ montant dans la modale (plusieurs sélecteurs possibles)
+            const miLocator = page.locator(
+              'dialog input[type="number"], .modal input[type="number"], ' +
+              '[role="dialog"] input[type="number"], ' +
+              'input[placeholder="Montant"], input[placeholder="montant"], ' +
+              'input[placeholder*="amount" i], input[placeholder*="montant" i]'
+            ).first();
+            const miExists = await miLocator.count();
+            if (miExists > 0) {
+              // Forcer Vue.js via nativeInputValueSetter
+              await miLocator.evaluate((el, val) => {
+                const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set;
+                if (nativeSetter) {
+                  nativeSetter.call(el, val);
+                } else {
+                  el.value = val;
+                }
+                el.dispatchEvent(new Event('input', { bubbles: true }));
+                el.dispatchEvent(new Event('change', { bubbles: true }));
+              }, String(montantCorrigé));
+              await page.waitForTimeout(300);
+              log(`F3 ✏ Montant modale corrigé : ${fmtAmt(reqAmount)}F → ${fmtAmt(montantCorrigé)}F`);
+            } else {
+              log(`F3 ⚠ Champ montant modale introuvable pour ${reqPhone}`);
+            }
           }
           await modalBtn.click();
           for (let i = 0; i < 30; i++) {
